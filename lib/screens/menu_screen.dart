@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:in_app_review/in_app_review.dart';
+import 'package:share_plus/share_plus.dart';
 import '../engine/ttt_engine.dart';
 import '../services/audio_service.dart';
 import '../services/settings_service.dart';
 import '../theme/nordic_themes.dart';
 import '../widgets/nordic.dart';
 import 'game_screen.dart';
+import 'pro_screen.dart';
 import 'settings_screen.dart';
-import 'support_screen.dart';
 
 /// Main menu — Scandinavian craft aesthetic, theme-aware.
 class MenuScreen extends StatefulWidget {
@@ -62,18 +64,48 @@ class _MenuScreenState extends State<MenuScreen> {
     });
   }
 
-  void _openSupport() {
+  void _openPro() {
     widget.audio.click();
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SupportScreen()),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => ProScreen(
+              audio: widget.audio,
+              settings: widget.settings,
+            ),
+          ),
+        )
+        .then((_) {
+      if (mounted) setState(() {}); // Pro may have been unlocked
+    });
+  }
+
+  Future<void> _share() async {
+    widget.audio.click();
+    try {
+      await Share.share(
+        'Play Tic Tac Toe with me! https://play.google.com/store/apps/details?id=com.gameswajiha.tictactoe',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _rate() async {
+    widget.audio.click();
+    try {
+      final review = InAppReview.instance;
+      if (await review.isAvailable()) {
+        await review.requestReview();
+      } else {
+        await review.openStoreListing(appStoreId: null);
+      }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
     final s = widget.settings;
-    final t = NordicThemes.byId(s.themeId);
-    final style = MarkerStyle.values[s.markerStyle];
+    final t = NordicThemes.byId(s.effectiveThemeId);
+    final style = MarkerStyle.values[s.effectiveMarkerStyle];
     return Scaffold(
       backgroundColor: t.canvas,
       body: SafeArea(
@@ -141,9 +173,28 @@ class _MenuScreenState extends State<MenuScreen> {
                       ),
                       Text('·', style: t.body(14, color: t.textSoft)),
                       TextButton(
-                        onPressed: _openSupport,
-                        child: Text('Support',
+                        onPressed: _openPro,
+                        child: Text(s.isPro ? 'Pro ✓' : 'Go Pro',
                             style: t.label(13, color: t.accent)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      NordicIconButton(
+                        icon: Icons.share,
+                        theme: t,
+                        tooltip: 'Share with a friend',
+                        onTap: _share,
+                      ),
+                      const SizedBox(width: 16),
+                      NordicIconButton(
+                        icon: Icons.star_rate,
+                        theme: t,
+                        tooltip: 'Rate this game',
+                        onTap: _rate,
                       ),
                     ],
                   ),
@@ -179,11 +230,17 @@ class _MenuScreenState extends State<MenuScreen> {
 
   Widget _difficultyRow(NordicSettings s, NordicThemeDef t) {
     Widget seg(BotDifficulty d, String label) {
-      final active = s.difficulty == d;
+      // Show the difficulty the game actually uses (Hard is Pro-only).
+      final active = s.effectiveDifficulty == d;
+      final locked = d == BotDifficulty.hard && !s.isPro;
       return Expanded(
         child: GestureDetector(
           onTap: () async {
             widget.audio.click();
+            if (locked) {
+              _openPro();
+              return;
+            }
             await s.setDifficulty(d);
             setState(() {});
           },
@@ -195,9 +252,21 @@ class _MenuScreenState extends State<MenuScreen> {
               borderRadius: BorderRadius.circular(10),
             ),
             alignment: Alignment.center,
-            child: Text(label.toUpperCase(),
-                style: t.label(11,
-                    color: active ? t.onPrimary : t.textSoft)),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (locked)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Icon(Icons.lock,
+                        size: 12,
+                        color: active ? t.onPrimary : t.textSoft),
+                  ),
+                Text(label.toUpperCase(),
+                    style: t.label(11,
+                        color: active ? t.onPrimary : t.textSoft)),
+              ],
+            ),
           ),
         ),
       );

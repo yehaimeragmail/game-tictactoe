@@ -258,7 +258,13 @@ void main() {
     final e = makeEngine(vsBot: true);
     addTearDown(e.dispose);
     e.tapCell(4); // human X takes center
-    await Future.delayed(const Duration(milliseconds: 200));
+    // Bot acts after thinkDelay + jitter (up to ~360ms in tests); poll for
+    // the move instead of assuming a fixed delay (was flaky at 200ms).
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (e.cells.where((c) => c == 1).isEmpty &&
+        DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 25));
+    }
     expect(e.cells.where((c) => c == 1).length, 1);
     expect(e.over || e.turn == 0 || e.phase == TttPhase.awaitingMove, isTrue);
   });

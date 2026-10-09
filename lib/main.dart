@@ -67,7 +67,7 @@ class _TicTacToeAppState extends State<TicTacToeApp>
       builder: (_, _) => MaterialApp(
         title: 'Tic Tac Toe',
         debugShowCheckedModeBanner: false,
-        theme: NordicThemes.byId(widget.settings.themeId).materialTheme(),
+        theme: NordicThemes.byId(widget.settings.effectiveThemeId).materialTheme(),
         home: SplashScreen(
             audio: widget.audio, settings: widget.settings),
       ),

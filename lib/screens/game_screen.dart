@@ -34,9 +34,10 @@ class _GameScreenState extends State<GameScreen>
   bool _backgrounded = false;
   bool _dialogShown = false;
 
-  NordicThemeDef get _t => NordicThemes.byId(widget.settings.themeId);
-  MarkerStyle get _style =>
-      MarkerStyle.values[widget.settings.markerStyle.clamp(0, 5)];
+  NordicThemeDef get _t =>
+      NordicThemes.byId(widget.settings.effectiveThemeId);
+  MarkerStyle get _style => MarkerStyle
+      .values[widget.settings.effectiveMarkerStyle.clamp(0, 5)];
 
   /// Name slots: solo → 0,1 ; duo → 2,3.
   int _slot(int mark) => widget.vsBot ? mark : mark + 2;
@@ -54,7 +55,7 @@ class _GameScreenState extends State<GameScreen>
         TttPlayer(
             name: s.playerNames[_slot(1)], isBot: widget.vsBot),
       ],
-      botDifficulty: s.difficulty,
+      botDifficulty: s.effectiveDifficulty,
       vsBot: widget.vsBot,
       swapStarter: s.swapStarter,
     );

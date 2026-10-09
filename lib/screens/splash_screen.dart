@@ -58,7 +58,7 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final theme = NordicThemes.byId(widget.settings.themeId);
+    final theme = NordicThemes.byId(widget.settings.effectiveThemeId);
     return Scaffold(
       backgroundColor: const Color(0xFF0E0B08),
       body: AnimatedSwitcher(

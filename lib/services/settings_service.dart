@@ -17,7 +17,11 @@ class NordicSettings extends ChangeNotifier {
   static const _kTheme = 'ttt_theme_id';
   static const _kMarker = 'ttt_marker_style'; // MarkerStyle index
   static const _kSwapStarter = 'ttt_swap_starter';
-  static const _kNames = 'ttt_player_names'; // StringList, 4 entries
+  // Player names are stored as a JSON string (order-preserving). Do NOT use
+  // setStringList here: on Android SharedPreferences string lists are backed
+  // by an unordered StringSet, so names came back scrambled across slots
+  // after a restart (BUG 1, found 2026-10-09).
+  static const _kNames = 'ttt_player_names'; // JSON-encoded StringList, 4 entries
   static const _kSoloX = 'ttt_solo_x';
   static const _kSoloO = 'ttt_solo_o';
   static const _kSoloD = 'ttt_solo_d';
@@ -25,6 +29,7 @@ class NordicSettings extends ChangeNotifier {
   static const _kDuoO = 'ttt_duo_o';
   static const _kDuoD = 'ttt_duo_d';
   static const _kSavedGame = 'ttt_saved_game';
+  static const _kPro = 'ttt_pro_unlocked';
 
   /// Slots: 0 = solo X, 1 = solo O, 2 = duo X, 3 = duo O.
   static const defaultNames = ['You', 'Bot', 'Player 1', 'Player 2'];
@@ -32,13 +37,43 @@ class NordicSettings extends ChangeNotifier {
   bool musicOn = true;
   bool sfxOn = true;
   double volume = 0.8;
-  BotDifficulty difficulty = BotDifficulty.hard;
+  BotDifficulty difficulty = BotDifficulty.normal;
   String themeId = 'classic';
   int markerStyle = 0;
   bool swapStarter = false;
   List<String> playerNames = List.of(defaultNames);
   int soloX = 0, soloO = 0, soloDraws = 0;
   int duoX = 0, duoO = 0, duoDraws = 0;
+
+  /// Pro unlock (one-time `tictactoepro` IAP). Persisted; restore-purchases
+  /// re-grants it after reinstalls.
+  bool isPro = false;
+
+  // ------------------------------------------------------- Pro gating
+  /// Free-vs-Pro content split (BUG 3). Free players get a generous slice;
+  /// everything else needs the one-time Pro unlock.
+  static const freeThemeIds = {'classic', 'birch', 'fjord'};
+  static const freeMarkerStyles = 2; // MarkerStyle indices 0..1 (ceramic, chalk)
+
+  /// Theme actually applied: never a Pro-only theme for free players.
+  String get effectiveThemeId =>
+      isPro || freeThemeIds.contains(themeId) ? themeId : 'classic';
+
+  /// Marker style actually applied: never a Pro-only style for free players.
+  int get effectiveMarkerStyle =>
+      isPro || markerStyle < freeMarkerStyles ? markerStyle : 0;
+
+  /// Difficulty actually used: Hard bot is a Pro feature.
+  BotDifficulty get effectiveDifficulty => isPro ||
+          difficulty != BotDifficulty.hard
+      ? difficulty
+      : BotDifficulty.normal;
+
+  Future<void> setPro(bool v) async {
+    isPro = v;
+    notifyListeners();
+    await _save();
+  }
 
   SharedPreferences? _prefs;
 
@@ -49,17 +84,12 @@ class NordicSettings extends ChangeNotifier {
     sfxOn = p.getBool(_kSfx) ?? true;
     volume = p.getDouble(_kVolume) ?? 0.8;
     difficulty =
-        BotDifficulty.values[(p.getInt(_kDifficulty) ?? 2).clamp(0, 2)];
+        BotDifficulty.values[(p.getInt(_kDifficulty) ?? 1).clamp(0, 2)];
     themeId = p.getString(_kTheme) ?? 'classic';
     markerStyle = (p.getInt(_kMarker) ?? 0).clamp(0, 5);
     swapStarter = p.getBool(_kSwapStarter) ?? false;
-    final names = p.getStringList(_kNames);
-    if (names != null && names.length == 4) {
-      playerNames = [
-        for (int i = 0; i < 4; i++)
-          names[i].trim().isEmpty ? defaultNames[i] : names[i].trim()
-      ];
-    }
+    playerNames = _readNames(p);
+    isPro = p.getBool(_kPro) ?? false;
     soloX = p.getInt(_kSoloX) ?? 0;
     soloO = p.getInt(_kSoloO) ?? 0;
     soloDraws = p.getInt(_kSoloD) ?? 0;
@@ -67,6 +97,29 @@ class NordicSettings extends ChangeNotifier {
     duoO = p.getInt(_kDuoO) ?? 0;
     duoDraws = p.getInt(_kDuoD) ?? 0;
     notifyListeners();
+  }
+
+  /// Reads player names with backward compatibility: current format is a
+  /// JSON string (order-preserving); very old installs may carry the legacy
+  /// unordered StringList, which we still accept but re-save in the new
+  /// format on the next write.
+  List<String> _readNames(SharedPreferences p) {
+    List<String>? raw;
+    final jsonRaw = p.getString(_kNames);
+    if (jsonRaw != null) {
+      try {
+        final decoded = jsonDecode(jsonRaw);
+        if (decoded is List) raw = [for (final e in decoded) '$e'];
+      } catch (_) {
+        // fall through to legacy read
+      }
+    }
+    raw ??= p.getStringList(_kNames);
+    if (raw == null || raw.length != 4) return List.of(defaultNames);
+    return [
+      for (int i = 0; i < 4; i++)
+        raw[i].trim().isEmpty ? defaultNames[i] : raw[i].trim()
+    ];
   }
 
   Future<void> _save() async {
@@ -79,7 +132,8 @@ class NordicSettings extends ChangeNotifier {
     await p.setString(_kTheme, themeId);
     await p.setInt(_kMarker, markerStyle);
     await p.setBool(_kSwapStarter, swapStarter);
-    await p.setStringList(_kNames, playerNames);
+    await p.setString(_kNames, jsonEncode(playerNames));
+    await p.setBool(_kPro, isPro);
     await p.setInt(_kSoloX, soloX);
     await p.setInt(_kSoloO, soloO);
     await p.setInt(_kSoloD, soloDraws);
