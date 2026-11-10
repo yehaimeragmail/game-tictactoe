@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../services/audio_service.dart';
 import '../services/iap_service.dart';
 import '../services/settings_service.dart';
@@ -177,8 +178,11 @@ class _ProScreenState extends State<ProScreen> {
                 const Center(child: CircularProgressIndicator())
               else
                 _storeSection(t, s),
-              const SizedBox(height: 16),
-              _tipJarCard(t),
+              // Tips are Android-only: hidden on iOS (App Store).
+              if (defaultTargetPlatform != TargetPlatform.iOS) ...[
+                const SizedBox(height: 16),
+                _tipJarCard(t),
+              ],
               const SizedBox(height: 8),
               Text('Credits: WAJIHA',
                   style: t.label(12, color: t.textSoft),
