@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 
 /// Nordic audio for Tic Tac Toe — all sounds synthesized in code as WAV bytes.
 /// No asset files. Warm, physical, tabletop-appropriate sounds.
+/// Clips play from real temp .wav files: iOS does NOT implement BytesSource.
 ///
 /// Reliability design (every call is safe to repeat and safe to overlap):
 /// - Music clips are synthesized ONCE and cached; starting music never blocks
@@ -25,6 +27,44 @@ class NordicAudio {
 
   // Cache synthesized clips so we only build them once.
   final Map<String, Uint8List> _cache = {};
+  // Synthesized clips written out as real .wav files (see _writeFile):
+  // iOS (audioplayers_darwin) does NOT implement BytesSource, so every
+  // BytesSource play fails silently on iOS while Android plays it fine.
+  // Files played via DeviceFileSource work on both platforms.
+  final Map<String, String> _fileCache = {};
+  Directory? _audioDir;
+
+  Future<Directory> _tempDir() async =>
+      _audioDir ??= await Directory.systemTemp.createTemp('tictactoe_audio');
+
+  /// Write synthesized bytes to a temp .wav file once, return its path.
+  Future<String> _writeFile(String key, Uint8List bytes) async {
+    final existing = _fileCache[key];
+    if (existing != null) return existing;
+    final file = File('${(await _tempDir()).path}/$key.wav');
+    await file.writeAsBytes(bytes, flush: true);
+    _fileCache[key] = file.path;
+    return file.path;
+  }
+
+  Future<String> _clipFile(String key, List<double> Function() build) async =>
+      _writeFile(key, _clip(key, build));
+
+  /// iOS audio session: playback category so sounds play even with the
+  /// silent switch on. Safe to call repeatedly; errors are swallowed.
+  Future<void> _configureSession() async {
+    try {
+      await AudioPlayer.global.setAudioContext(
+        AudioContext(
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: {AVAudioSessionOptions.mixWithOthers},
+          ),
+        ),
+      );
+    } catch (_) {}
+  }
+
 
   // Music state machine.
   bool _musicBusy = false;
@@ -34,6 +74,7 @@ class NordicAudio {
 
   NordicAudio() {
     _music.setReleaseMode(ReleaseMode.loop);
+    _configureSession();
   }
 
   void configure(
@@ -42,6 +83,7 @@ class NordicAudio {
     this.sfxOn = sfxOn;
     volume = volume.clamp(0.0, 1.0);
     this.volume = volume;
+    _configureSession();
     _music.setVolume(musicOn ? volume * 0.5 : 0.0);
     _sfx.setVolume(sfxOn ? volume : 0.0);
     if (!musicOn) {
@@ -53,8 +95,8 @@ class NordicAudio {
   Future<void> prewarm() async {
     if (_disposed) return;
     await Future(() {});
-    _menuBytes();
-    _gameBytes();
+    await _writeFile('music_menu', _menuBytes());
+    await _writeFile('music_game', _gameBytes());
   }
 
   // ---------------------------------------------------------- WAV synthesis
@@ -198,31 +240,33 @@ class NordicAudio {
       });
 
   // ------------------------------------------------------------------ SFX
-  Future<void> _play(Uint8List bytes) async {
+  Future<void> _play(String key, List<double> Function() build) async {
     if (!sfxOn || _disposed) return;
     try {
-      await _sfx.play(BytesSource(bytes));
+      await _sfx.play(DeviceFileSource(await _clipFile(key, build)));
     } catch (_) {}
   }
 
-  Future<void> click() => _play(_clip('click', () => _tone(1100, 0.05)));
-  Future<void> placeX() => _play(_clip('place_x', _knock));
-  Future<void> placeO() => _play(_clip('place_o', _clink));
+  Future<void> click() => _play('click', () => _tone(1100, 0.05));
+  Future<void> placeX() => _play('place_x', _knock);
+  Future<void> placeO() => _play('place_o', _clink);
   Future<void> invalid() =>
-      _play(_clip('invalid', () => _tone(150, 0.16, harmonics: 0.5)));
+      _play('invalid', () => _tone(150, 0.16, harmonics: 0.5));
   Future<void> gameStart() =>
-      _play(_clip('start', () => _tone(392, 0.3, freqEnd: 784)));
-  Future<void> win() => _play(_clip('win',
-      () => _arp([587.33, 659.25, 739.99, 880.0, 1174.66], 0.16, 0.03)));
-  Future<void> draw() => _play(_clip(
-      'draw', () => _padChord([293.66, 440.0, 587.33], 0.7)));
-  Future<void> lose() => _play(
-      _clip('lose', () => _arp([440.0, 369.99, 293.66], 0.22, 0.04)));
+      _play('start', () => _tone(392, 0.3, freqEnd: 784));
+  Future<void> win() => _play('win',
+      () => _arp([587.33, 659.25, 739.99, 880.0, 1174.66], 0.16, 0.03));
+  Future<void> draw() => _play('draw', () => _padChord([293.66, 440.0, 587.33], 0.7));
+  Future<void> lose() => _play('lose', () => _arp([440.0, 369.99, 293.66], 0.22, 0.04));
 
   // ----------------------------------------------------------------- music
   /// Start (or keep) a music track. Serialized: overlapping calls collapse
   /// into one, and re-requesting the current track is a no-op.
-  Future<void> _startTrack(String track, Uint8List Function() bytes) async {
+  Future<void> _startTrack(
+    String track,
+    String fileKey,
+    Uint8List Function() bytes,
+  ) async {
     if (!musicOn || _disposed) return;
     if (_musicBusy) return;
     if (_currentTrack == track) {
@@ -236,7 +280,7 @@ class NordicAudio {
       await _music.stop();
       _currentTrack = track;
       _pausedByLifecycle = false;
-      await _music.play(BytesSource(bytes()));
+      await _music.play(DeviceFileSource(await _writeFile(fileKey, bytes())));
     } catch (_) {
       _currentTrack = null;
     } finally {
@@ -244,8 +288,8 @@ class NordicAudio {
     }
   }
 
-  Future<void> startMenuMusic() => _startTrack('menu', _menuBytes);
-  Future<void> startGameMusic() => _startTrack('game', _gameBytes);
+  Future<void> startMenuMusic() => _startTrack('menu', 'music_menu', _menuBytes);
+  Future<void> startGameMusic() => _startTrack('game', 'music_game', _gameBytes);
 
   Future<void> stopMusic() async {
     if (_disposed) return;
@@ -291,6 +335,9 @@ class NordicAudio {
     try {
       await _sfx.dispose();
       await _music.dispose();
+    } catch (_) {}
+    try {
+      await _audioDir?.delete(recursive: true);
     } catch (_) {}
   }
 }
