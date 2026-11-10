@@ -248,7 +248,6 @@ class _ProScreenState extends State<ProScreen> {
           row('Marker styles', '2', 'All 6'),
           row('Bot difficulty', 'Easy · Normal', 'Adds Hard'),
           row('Player names', '4 slots', '4 slots'),
-          row('Tip jar', 'Included', 'Included'),
           row('Price', 'Free', 'One-time', highlight: true),
         ],
       ),
